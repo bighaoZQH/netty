@@ -70,8 +70,11 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
      */
     protected AbstractChannel(Channel parent) {
         this.parent = parent;
+        // 每个通道自己的唯一id
         id = newId();
+        // 创建涉及到channel底层tcp读写的类
         unsafe = newUnsafe();
+        // pipeline真正的创建是在这，其实就是一个双向链表
         pipeline = newChannelPipeline();
     }
 
@@ -449,10 +452,16 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             return remoteAddress0();
         }
 
+
+        /**
+         * @param eventLoop NioEventLoop单线程线程池
+         * @param promise   promise结果封装，外部可以注册监听器，执行异步操作
+         */
         @Override
         public final void register(EventLoop eventLoop, final ChannelPromise promise) {
             ObjectUtil.checkNotNull(eventLoop, "eventLoop");
             if (isRegistered()) {
+                // 如果重复注册了，则设置promise的失败结果，然后回调监听者执行失败的逻辑
                 promise.setFailure(new IllegalStateException("registered to an event loop already"));
                 return;
             }
@@ -462,12 +471,15 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 return;
             }
 
+            // 将eventLoop绑定到channel上，后续该channel上的事件 或 任务 都会依赖该eventLoop中的线程去处理
             AbstractChannel.this.eventLoop = eventLoop;
 
+            // 判断当前线程是否在当前eventLoop中
             if (eventLoop.inEventLoop()) {
                 register0(promise);
             } else {
                 try {
+                    // 如果不在就新建一个线程进行注册
                     eventLoop.execute(new Runnable() {
                         @Override
                         public void run() {
@@ -485,6 +497,11 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
         }
 
+        /**
+         * 这个方法是由当前channel关联的eventloop线程执行
+         * 参数promise表示注册结果，外部可以向他注册监听者，来完成注册后的逻辑
+         * @param promise
+         */
         private void register0(ChannelPromise promise) {
             try {
                 // check if the channel is still open as it could be closed in the mean time when the register
@@ -493,18 +510,24 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                     return;
                 }
                 boolean firstRegistration = neverRegistered;
+                // 向selector注册连接
                 doRegister();
                 neverRegistered = false;
+                // 表示当前channel已经注册到多路复用器了
                 registered = true;
 
                 // Ensure we call handlerAdded(...) before we actually notify the promise. This is needed as the
                 // user may already fire events through the pipeline in the ChannelFutureListener.
                 pipeline.invokeHandlerAddedIfNeeded();
 
+                // 这一步回去回调 注册在promise上的那个Listener，比如主线程在regFuture上注册的监听者
                 safeSetSuccess(promise);
+                // 传播通道注册事件 in类型事件
                 pipeline.fireChannelRegistered();
+
                 // Only fire a channelActive if the channel has never been registered. This prevents firing
                 // multiple channel actives if the channel is deregistered and re-registered.
+                // 因为绑定事件是eventloop线程去做的，所以执行到这里isActive()是false
                 if (isActive()) {
                     if (firstRegistration) {
                         pipeline.fireChannelActive();
@@ -545,8 +568,10 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                         "address (" + localAddress + ") anyway as requested.");
             }
 
+            // 没绑定之前为false
             boolean wasActive = isActive();
             try {
+                // 调用jdk底层进行端口绑定
                 doBind(localAddress);
             } catch (Throwable t) {
                 safeSetFailure(promise, t);
@@ -554,7 +579,9 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 return;
             }
 
+            // 如果当没进行绑定之前是false，绑定之后为true
             if (!wasActive && isActive()) {
+                // 传播active事件
                 invokeLater(new Runnable() {
                     @Override
                     public void run() {
@@ -563,6 +590,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 });
             }
 
+            // promise这里代表着绑定结果，谁在等着绑定结果呢？ 主线程
             safeSetSuccess(promise);
         }
 

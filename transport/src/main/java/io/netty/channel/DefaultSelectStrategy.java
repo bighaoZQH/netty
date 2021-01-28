@@ -25,8 +25,20 @@ final class DefaultSelectStrategy implements SelectStrategy {
 
     private DefaultSelectStrategy() { }
 
+
+    /**
+     * private final IntSupplier selectNowSupplier = new IntSupplier() {
+     *         @Override
+     *         public int get() throws Exception {
+     *             return selectNow();
+     *         }
+     * };
+     *
+     * selectNow()方法就是调用了多路复用器的selectNow()方法，该方法不阻塞线程，直接返回
+     */
     @Override
     public int calculateStrategy(IntSupplier selectSupplier, boolean hasTasks) throws Exception {
+        // 如果当前nioEventLoop线程有任务，则不阻塞，直接返回
         return hasTasks ? selectSupplier.get() : SelectStrategy.SELECT;
     }
 }

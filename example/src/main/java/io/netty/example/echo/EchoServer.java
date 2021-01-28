@@ -16,11 +16,7 @@
 package io.netty.example.echo;
 
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.EventLoopGroup;
+import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -71,8 +67,38 @@ public final class EchoServer {
              });
 
             // Start the server.
+            /**
+             * sync()的说明:
+             * 绑定端口,bind是异步的, sync方法是同步阻塞的,bind会立即返回一个ChannelFuture对象,
+             * 但是主线程需要调用ChannelFuture的sync方法来等待绑定的结果,因为端口绑定不上,我也不好做其他的事情
+             * 其实没有绑定上,就会抛异常
+             *
+             * 当调用的sync()方法所返回的ChannelFuture里面的动作一定是已经完成了
+             * 所以调用的sync()的目的就是保证ChannelFuture已经完成了
+             */
+            //cf.channel().config().getXXX();
             ChannelFuture f = b.bind(PORT).sync();
 
+            // 给ChannelFuture注册监听器，监控我们关心的事件
+            /*f.addListener(new ChannelFutureListener() {
+                @Override
+                public void operationComplete(ChannelFuture future) throws Exception {
+                    if (future.isSuccess()) {
+                        System.out.println("监听端口 6668 成功");
+                    } else {
+                        System.out.println("监听端口 6668 失败");
+                    }
+                }
+            });*/
+
+            /**
+             * 监听通道关闭事件
+             * 作用：服务端管道关闭的监听器并同步阻塞,直到channel关闭,线程才会往下执行,结束进程；
+             * 线程执行到这里就 wait 子线程结束，子线程才是真正监听和接受请求的，子线程就是Netty启动的监听端口的线程；
+             * 即closeFuture()是开启了一个channel的监听器，负责监听channel是否关闭的状态，
+             * 如果未来监听到channel关闭了，子线程才会释放，syncUninterruptibly()让主线程同步等待子线程结果。
+             * 补充：.channel.close()才是主动关闭通道的方法。
+             */
             // Wait until the server socket is closed.
             f.channel().closeFuture().sync();
         } finally {

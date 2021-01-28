@@ -37,6 +37,13 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
     private static final int DEFAULT_EVENT_LOOP_THREADS;
 
     static {
+        /**
+         * 1表示一台计算机至少会有1个cpu核心数
+         * 如果系统属性中有“io.netty.eventLoopThreads”属性值，则返回；
+         * 否则取可用cpu可用核心(逻辑cpu核心数 如果开启了超线程就是物理核心数*2) * 2
+         *
+         * 因此netty线程池默认开始的线程数就是NettyRuntime.availableProcessors() * 2
+         */
         DEFAULT_EVENT_LOOP_THREADS = Math.max(1, SystemPropertyUtil.getInt(
                 "io.netty.eventLoopThreads", NettyRuntime.availableProcessors() * 2));
 
@@ -47,6 +54,7 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
 
     /**
      * @see MultithreadEventExecutorGroup#MultithreadEventExecutorGroup(int, Executor, Object...)
+     * 这里会调用父类构造 nThreads传入0时会选则DEFAULT_EVENT_LOOP_THREADS
      */
     protected MultithreadEventLoopGroup(int nThreads, Executor executor, Object... args) {
         super(nThreads == 0 ? DEFAULT_EVENT_LOOP_THREADS : nThreads, executor, args);
@@ -83,6 +91,8 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
 
     @Override
     public ChannelFuture register(Channel channel) {
+        // next() 返回workerGroup中的一个eventLoop对象
+        // eventLoop是一个单线程的线程池。其内部有selector实例
         return next().register(channel);
     }
 

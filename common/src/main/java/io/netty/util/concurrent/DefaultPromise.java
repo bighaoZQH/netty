@@ -236,6 +236,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
 
     @Override
     public Promise<V> await() throws InterruptedException {
+        // 如果已经完成 则返回
         if (isDone()) {
             return this;
         }
@@ -247,6 +248,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
         checkDeadLock();
 
         synchronized (this) {
+            // 循环等待端口绑定完成后返回
             while (!isDone()) {
                 incWaiters();
                 try {
@@ -401,6 +403,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
 
     @Override
     public Promise<V> sync() throws InterruptedException {
+        // 如果端口没有绑定成功，则阻塞当前线程直到绑定成功 或 产生异常
         await();
         rethrowIfFailed();
         return this;
@@ -612,6 +615,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     private boolean setValue0(Object objResult) {
         if (RESULT_UPDATER.compareAndSet(this, null, objResult) ||
             RESULT_UPDATER.compareAndSet(this, UNCANCELLABLE, objResult)) {
+            // 唤醒所有等待线程
             if (checkNotifyWaiters()) {
                 notifyListeners();
             }

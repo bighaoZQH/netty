@@ -89,6 +89,17 @@ public class DefaultChannelPipeline implements ChannelPipeline {
      */
     private boolean registered;
 
+    /**
+     * a) 赋值NioServerSocketChannel给成员变量channel
+     * b) 根据channel构建SucceededChannelFuture、VoidChannelPromise成员变量
+     * c) 构建ChannelHandler链表头HeadContext和链表尾TailContext，并赋值给成员变量head、tail
+     * d) 将head.next指向tail，将tail.prev指向head
+     * 注意：
+     * 1）入站事件会依次被从head ——> ... ——> tail中的所有ChannelInboundHandler处理
+     * 2）出站事件会依次被从tail ——> ... ——> head中的所有ChannelOutboundHandler处理
+     * 3）我们程序中通过add*(...)加进来的ChannelHandler都会处于head和tail之间
+     * 也就是说链表头是HeadContext，链表尾是TailContext，这是固定不会改变的
+     */
     protected DefaultChannelPipeline(Channel channel) {
         this.channel = ObjectUtil.checkNotNull(channel, "channel");
         succeededFuture = new SucceededChannelFuture(channel, null);
@@ -97,6 +108,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         tail = new TailContext(this);
         head = new HeadContext(this);
 
+        // 形成初始的channelPipeline的双向链表
         head.next = tail;
         tail.prev = head;
     }
@@ -195,14 +207,23 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         return addLast(null, name, handler);
     }
 
+    /** 添加handler EventExecutorGroup可以指定添加到哪个事件执行组 */
     @Override
     public final ChannelPipeline addLast(EventExecutorGroup group, String name, ChannelHandler handler) {
         final AbstractChannelHandlerContext newCtx;
         synchronized (this) {
+            // 1.检查是否有重复handler
             checkMultiplicity(handler);
 
+            /**
+             * 2.创建一个AbstractChannelHandlerContext节点
+             * ChannelHandlerContext是ChannelHandler和ChannelPipeline之间的关联,
+             * 每当有ChannelHandler添加到pipline中时，都会创建Context。
+             * Context的主要功能是管理他所关联的Handler和同一个pipeline中其他Handler之间的交互。
+             */
             newCtx = newContext(group, filterName(name, handler), handler);
 
+            // 3.向双向链表添加节点
             addLast0(newCtx);
 
             // If the registered is false it means that the channel was not registered on an eventLoop yet.
@@ -220,6 +241,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
                 return this;
             }
         }
+        // 4.回调用户方法 同步或异步或晚点异步的调用callHandlerAdded()方法
         callHandlerAdded0(newCtx);
         return this;
     }
@@ -1100,6 +1122,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
             assert !registered;
 
             // This Channel itself was registered.
+            // 此时channel已经注册
             registered = true;
 
             pendingHandlerCallbackHead = this.pendingHandlerCallbackHead;

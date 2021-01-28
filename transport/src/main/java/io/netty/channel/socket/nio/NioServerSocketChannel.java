@@ -70,8 +70,15 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
 
     /**
      * Create a new instance
+     * 1.获取jdk层面的ServerSocketChannel
+     * 2.将该channel设置为非阻塞，并保存感兴趣的事件为 accept事件
+     * 3.将ServerSocketChannel封装成Netty自己的NioServerSocketChannel，
+     *   为该channel分配id对象，
+     *   netty的unsafe对象(服务端的对象是NioMessageUnsafe，用于读取链接)
+     *   初始化pipeline(一个头结点，一个尾节点)
      */
     public NioServerSocketChannel() {
+        // newSocket()这里得到一个jdk层面的ServerSocketChannel，Netty会包装这个ServerSocketChannel
         this(newSocket(DEFAULT_SELECTOR_PROVIDER));
     }
 
@@ -86,7 +93,10 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
      * Create a new instance using the given {@link ServerSocketChannel}.
      */
     public NioServerSocketChannel(ServerSocketChannel channel) {
+        // 调用父类构造 设置为非阻塞模式
+        // SelectionKey.OP_ACCEPT表示ServerSocketChannel注册到selecor上的关注事件，bossGroup只关注链接事件
         super(null, channel, SelectionKey.OP_ACCEPT);
+        // tcp参数配置类
         config = new NioServerSocketChannelConfig(this, javaChannel().socket());
     }
 
@@ -142,12 +152,22 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
         javaChannel().close();
     }
 
+    /**
+     * doReadMessages是读取boss线程中的NioServerSocketChannel接收到请求，并把这些请求放入到容器
+     *
+     * 1.调用NioServerSocketChannel内部封装的serverSocketChannel的accept方法，这是nio的做法
+     * 2.获取到JDK的SocketChannel，然后，使用NioSocketChannel进行封装并添加到容器中
+     * 3.这样buf中就有了NioSocketChannel
+     */
     @Override
     protected int doReadMessages(List<Object> buf) throws Exception {
+        // 接收新连接创建SocketChannel
+        // 调用NioServerSocketChannel内部封装的serverSocketChannel的accept方法，这是nio的做法
         SocketChannel ch = SocketUtils.accept(javaChannel());
 
         try {
             if (ch != null) {
+                // 将SocketChannel包装成NioSocketChannel并加入到list中
                 buf.add(new NioSocketChannel(this, ch));
                 return 1;
             }

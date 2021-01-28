@@ -140,7 +140,9 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         this.provider = ObjectUtil.checkNotNull(selectorProvider, "selectorProvider");
         this.selectStrategy = ObjectUtil.checkNotNull(strategy, "selectStrategy");
         final SelectorTuple selectorTuple = openSelector();
+        // 这个selector是netty封装的
         this.selector = selectorTuple.selector;
+        // 这个selector是jdk原生的
         this.unwrappedSelector = selectorTuple.unwrappedSelector;
     }
 
@@ -433,11 +435,21 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     @Override
     protected void run() {
+        // 统计select轮训次数，用于处理epoll bug
         int selectCnt = 0;
+        /**
+         * 死循环来监听和处理事件，是一种响应式的
+         */
         for (;;) {
             try {
+                // >=0表示selector的返回值，注册在多路复用器上就绪的个数
+                // <=0 常量状态 CONTINUE BUSY_WAIT SELECT
                 int strategy;
                 try {
+                    // selectStrategy ==> DefaultSelectStrategy对象
+                    // 根据当前NioEventLoop线程是否有本地任务，来决定怎么处理.
+                    // 1.如果有任务就调用多路复用器的selectNow()方法，返回selector上就绪的channel个数
+                    // 2.没有任务，返回-1，下面的switch再根据返回值进行处理
                     strategy = selectStrategy.calculateStrategy(selectNowSupplier, hasTasks());
                     switch (strategy) {
                     case SelectStrategy.CONTINUE:
@@ -447,13 +459,20 @@ public final class NioEventLoop extends SingleThreadEventLoop {
                         // fall-through to SELECT since the busy-wait is not supported with NIO
 
                     case SelectStrategy.SELECT:
+                        // 2.没有任务，返回-1，下面的switch再根据返回值进行处理
+                        // 首先轮询注册到reactor线程对应的selector上的所有的channel的IO事件
+                        // 获取 下一个 可调度周期性任务 的执行截止时间
                         long curDeadlineNanos = nextScheduledTaskDeadlineNanos();
+                        // -1表示EventLoop内 没有 需要 周期性执行的可调度任务
                         if (curDeadlineNanos == -1L) {
                             curDeadlineNanos = NONE; // nothing on the calendar
                         }
                         nextWakeupNanos.set(curDeadlineNanos);
                         try {
                             if (!hasTasks()) {
+                                // 如果没有 本地普通任务 需要执行，则进行select
+                                // 1.curDeadlineNanos为NONE
+                                // 2.curDeadlineNanos是下一个周期性任务的截止时间
                                 strategy = select(curDeadlineNanos);
                             }
                         } finally {
@@ -473,30 +492,47 @@ public final class NioEventLoop extends SingleThreadEventLoop {
                     continue;
                 }
 
+                // 走到这里，selectStrategy就是代表的ch就绪的事件个数
+
                 selectCnt++;
                 cancelledKeys = 0;
                 needsToSelectAgain = false;
+                // 线程处理IO事件的事件占比，默认50%
                 final int ioRatio = this.ioRatio;
+                // 表示本轮 线程 是否执行过 本地任务
                 boolean ranTasks;
+
+                // ioRatio == 100表示io优先,IO处理完后，再处理本地任务
                 if (ioRatio == 100) {
                     try {
                         if (strategy > 0) {
+                            // 如果selector上有就绪事件，就去处理io事件
                             processSelectedKeys();
                         }
                     } finally {
                         // Ensure we always run tasks.
+                        // 最后处理本地队列，即处理外部线程扔到异步队列里的线程
                         ranTasks = runAllTasks();
                     }
-                } else if (strategy > 0) {
+                }
+                // strategy > 0表示当前NioEventLoop内的selector上有就绪事件
+                else if (strategy > 0) {
+                    // IO事件处理的开始时间
                     final long ioStartTime = System.nanoTime();
                     try {
+                        // 处理产生网络IO事件的Channel
                         processSelectedKeys();
                     } finally {
                         // Ensure we always run tasks.
+                        // IO事件 处理总耗时，用于计算执行本地任务队列的最大时间
                         final long ioTime = System.nanoTime() - ioStartTime;
+                        // 处理任务队列
                         ranTasks = runAllTasks(ioTime * (100 - ioRatio) / ioRatio);
                     }
-                } else {
+                }
+                // 说明NioEventLoop内的selector上 没有就绪事件。那么就直接去处理本地任务就行了
+                else {
+                    // timeoutNanos为0表示执行最少数量的本地任务
                     ranTasks = runAllTasks(0); // This will run the minimum number of tasks
                 }
 
@@ -644,13 +680,17 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     private void processSelectedKeysOptimized() {
         for (int i = 0; i < selectedKeys.size; ++i) {
+            // 1.取出IO事件以及对应的channel(经过netty封装过的channel)
             final SelectionKey k = selectedKeys.keys[i];
             // null out entry in the array to allow to have it GC'ed once the Channel close
             // See https://github.com/netty/netty/issues/2363
+            // 将数组里的引用设置为null
             selectedKeys.keys[i] = null;
 
+            // 附件: 注册时，会拿到 在注册阶段 把netty封装的channel提供给selector的对象
             final Object a = k.attachment();
 
+            // 大部分情况，执行这个分支 处理channel的io事件
             if (a instanceof AbstractNioChannel) {
                 processSelectedKey(k, (AbstractNioChannel) a);
             } else {
@@ -715,6 +755,8 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
             // Also check for readOps of 0 to workaround possible JDK bug which may otherwise lead
             // to a spin loop
+            // 客户端发送请求后，此时readyOps为16，也就是accept事件
+            // 这个unsafe是boos线程中NioServerSocketChannel的AbstractNioMessageChannel$NioMessageUnsafe对象
             if ((readyOps & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0 || readyOps == 0) {
                 unsafe.read();
             }
@@ -805,8 +847,13 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         return selector.selectNow();
     }
 
+    /**
+     * 1.curDeadlineNanos为NONE
+     * 2.curDeadlineNanos是下一个周期性任务的截止时间
+     */
     private int select(long deadlineNanos) throws IOException {
         if (deadlineNanos == NONE) {
+            // 如果没有需要执行的周期性任务，则将当前线程阻塞，直到有就绪的通道，再返回就绪的事件个数
             return selector.select();
         }
         // Timeout will only be 0 if deadline is within 5 microsecs

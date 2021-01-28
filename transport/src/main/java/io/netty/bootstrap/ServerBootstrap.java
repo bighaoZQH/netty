@@ -50,6 +50,7 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
     // purposes.
     private final Map<ChannelOption<?>, Object> childOptions = new LinkedHashMap<ChannelOption<?>, Object>();
     private final Map<AttributeKey<?>, Object> childAttrs = new ConcurrentHashMap<AttributeKey<?>, Object>();
+    // bootstrap配置 ServerBootstrapConfig中持有了当前的ServerBootstrap的实例
     private final ServerBootstrapConfig config = new ServerBootstrapConfig(this);
     private volatile EventLoopGroup childGroup;
     private volatile ChannelHandler childHandler;
@@ -123,25 +124,36 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
      * Set the {@link ChannelHandler} which is used to serve the request for the {@link Channel}'s.
      */
     public ServerBootstrap childHandler(ChannelHandler childHandler) {
+        // 这个childHandler就和childGroup关联起来
         this.childHandler = ObjectUtil.checkNotNull(childHandler, "childHandler");
         return this;
     }
 
+    // 初始化服务端channel
     @Override
     void init(Channel channel) {
+        // 获取并配置所有的服务端选项
         setChannelOptions(channel, newOptionsArray(), logger);
+        // 获取并配置所有的服务端属性
         setAttributes(channel, attrs0().entrySet().toArray(EMPTY_ATTRIBUTE_ARRAY));
 
+        // 管道，在创建Channel的时候会默认创建一个
         ChannelPipeline p = channel.pipeline();
 
         final EventLoopGroup currentChildGroup = childGroup;
         final ChannelHandler currentChildHandler = childHandler;
         final Entry<ChannelOption<?>, Object>[] currentChildOptions;
+        // 配置客户端 选项 和 属性
         synchronized (childOptions) {
             currentChildOptions = childOptions.entrySet().toArray(EMPTY_OPTION_ARRAY);
         }
         final Entry<AttributeKey<?>, Object>[] currentChildAttrs = childAttrs.entrySet().toArray(EMPTY_ATTRIBUTE_ARRAY);
 
+        // 添加管道处理handler
+        // ChannelInitializer本身不是一个handler，只是通过 适配器 实现了Handler接口
+        // 他存在的意义就是为了延迟初始化Pipeline，什么时候初始化呢？当pipeline上的channel激活后，真正的handler逻辑才要执行
+        // 后面将内部真正的handler加入到pipeline后，会将自己移除pipeline
+        // 到目前为止pipeline中的结构就是 head -> ChannelInitializer -> tail
         p.addLast(new ChannelInitializer<Channel>() {
             @Override
             public void initChannel(final Channel ch) {
@@ -151,6 +163,9 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
                     pipeline.addLast(handler);
                 }
 
+                // 当ChannelInitializer的initChannel方法被执行后，
+                // 增加一个ServerBootstrapAcceptor netty给我们默认添加连接器Handler
+                // 这里用来处理新的客户端连接
                 ch.eventLoop().execute(new Runnable() {
                     @Override
                     public void run() {
@@ -204,17 +219,29 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
             };
         }
 
+        /**
+         * 1.msg强转成Channel,实际上就是NioSocketChannel
+         * 2.添加NioSocketChannel的pipeline的handler，就是我们main方法里设置的childHandler方法里的
+         * 3.设置NioSocketChannel的各种属性
+         * 4.将该NioSocketChannel注册到childGroup中的一个EventLoop上，并添加一个监听器
+         * 5.这个childGroup就是我们main方法创建的数组，workerGroup
+         */
         @Override
         @SuppressWarnings("unchecked")
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            // 得到当前通道
             final Channel child = (Channel) msg;
 
+            // 这里会把childHandler的handler处理器也添加到pipeline
             child.pipeline().addLast(childHandler);
 
+            // 设置options和attrs
             setChannelOptions(child, childOptions, logger);
             setAttributes(child, childAttrs);
 
             try {
+                // 注册新的连接，将新的连接交给workerGroup
+                // 建立连接后，把消息处理就交给workerBoss线程池去处理了
                 childGroup.register(child).addListener(new ChannelFutureListener() {
                     @Override
                     public void operationComplete(ChannelFuture future) throws Exception {

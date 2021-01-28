@@ -44,6 +44,7 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
 
     @Override
     protected AbstractNioUnsafe newUnsafe() {
+        // 底层的unsafe不一样，客户端是NioByteUnsafe(用于读取数据)，服务端是NioMessageUnsafe(用于读取连接)
         return new NioMessageUnsafe();
     }
 
@@ -59,10 +60,38 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
 
         private final List<Object> readBuf = new ArrayList<Object>();
 
+        /**
+         * Netty接受请求过程
+         * 总体流程：接受连接-----> 创建一个新的NioSocketChannel-------
+         *          ---->注册到一个 worker EventLoop 上--------> 注册selecot Read 事件
+         *
+         * 1.服务器轮询 Accept 事件，获取事件后调用 unsafe 的 read 方法，
+         *  这个 unsafe 是 ServerSocket 的内部类，该方法内部由2部分组成
+         *
+         * 2.doReadMessages 用于创建 NioSocketChannel 对象，该对象包装 JDK 的 Nio Channel 客户端。
+         *      该方法会像创建 ServerSocketChanel 类似创建相关的 pipeline ， unsafe，config
+         *
+         * 3.随后执行 执行 pipeline.fireChannelRead 方法，
+         *  并将自己绑定到一个 chooser 选择器选择的 workerGroup 中的一个 EventLoop。
+         *  并且注册一个0，表示注册成功，但并没有注册读（1）事件
+         */
+
+        /**
+         * read方法
+         * 1.检查eventLoop线程是否是当前线程
+         * 2.调用doReadMessages()，传入一个List容器(readBuf)
+         *   doReadMessages是读取boss线程中的NioServerSocketChannel接收到请求，并把这些请求放入到容器
+         * 3.循环容器，执行pipeline.fireChannelRead(readBuf.get(i))
+         * 4.循环遍历容器中的所有请求，调用pipeline的fireChannelRead方法，用于处理这些
+         *  接受的请求或者其他事件，在read方法中，循环调用ServerSocket的pipeline的fireChannelRead方法，
+         *  开始执行管道中的handler的ChannelRead方法
+         */
         @Override
         public void read() {
+            // 检查eventLoop线程是否是当前线程
             assert eventLoop().inEventLoop();
             final ChannelConfig config = config();
+            // 得到管道
             final ChannelPipeline pipeline = pipeline();
             final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
             allocHandle.reset(config);
@@ -72,6 +101,8 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
             try {
                 try {
                     do {
+                        // 调用doReadMessages()，传入一个List容器
+                        // doReadMessages是读取boss线程中的NioServerSocketChannel接收到请求，并把这些请求放入到容器
                         int localRead = doReadMessages(readBuf);
                         if (localRead == 0) {
                             break;
@@ -90,6 +121,9 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
                 int size = readBuf.size();
                 for (int i = 0; i < size; i ++) {
                     readPending = false;
+                    // 循环容器，执行pipeline.fireChannelRead
+                    // 将每一条连接通过fireChannelRead逐层传播到ServerBootstrapAcceptor这个处理器
+                    // 执行channelRead()方法
                     pipeline.fireChannelRead(readBuf.get(i));
                 }
                 readBuf.clear();

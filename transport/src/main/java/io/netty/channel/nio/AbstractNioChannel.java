@@ -81,6 +81,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         this.ch = ch;
         this.readInterestOp = readInterestOp;
         try {
+            // 设置为非阻塞
             ch.configureBlocking(false);
         } catch (IOException e) {
             try {
@@ -372,11 +373,17 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         return loop instanceof NioEventLoop;
     }
 
+    /**
+     * 向selector注册连接，这时不关心任何事件
+     */
     @Override
     protected void doRegister() throws Exception {
         boolean selected = false;
         for (;;) {
             try {
+                // 通过底层的javaChannel把当前eventLoop中的selector注册上去
+                // ops: 0表示目前不关心任何事件，后面会重写
+                // 并把当前netty自己封装的channel(NioSocketChannel)当作一个att传入
                 selectionKey = javaChannel().register(eventLoop().unwrappedSelector(), 0, this);
                 return;
             } catch (CancelledKeyException e) {
@@ -411,6 +418,8 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
         final int interestOps = selectionKey.interestOps();
         if ((interestOps & readInterestOp) == 0) {
+            // 执行到这里，针对于这个客户端的连接就完成了，接下来就可以监听读事件了
+            // interestOps()方法会修改当前channel注册到多路复用器上的事件
             selectionKey.interestOps(interestOps | readInterestOp);
         }
     }

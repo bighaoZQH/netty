@@ -175,16 +175,26 @@ import java.lang.annotation.Target;
  * what fundamental differences they have, how they flow in a  pipeline,  and how to handle
  * the operation in your application.
  */
+
+/**
+ * ChannelHandler的作用就是处理IO事件或拦截IO事件，并将其转发给下一个处理程序ChannelHandler.
+ * Handler处理事件时分为入站和出站的，
+ * 两个方向的操作都是不同的，因此，Netty定义了两个子接口继承ChannelHandler
+ */
 public interface ChannelHandler {
 
     /**
      * Gets called after the {@link ChannelHandler} was added to the actual context and it's ready to handle events.
+     *
+     * 当把ChannelHandler添加到pipeline时被调用
      */
     void handlerAdded(ChannelHandlerContext ctx) throws Exception;
 
     /**
      * Gets called after the {@link ChannelHandler} was removed from the actual context and it doesn't handle events
      * anymore.
+     *
+     * 当从pipeline中移除时调用
      */
     void handlerRemoved(ChannelHandlerContext ctx) throws Exception;
 
@@ -193,6 +203,8 @@ public interface ChannelHandler {
      *
      * @deprecated if you want to handle this event you should implement {@link ChannelInboundHandler} and
      * implement the method there.
+     *
+     * 当处理过程中在pipeline发生异常时调用
      */
     @Deprecated
     void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception;

@@ -39,6 +39,8 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
     /**
      * Create a new instance using the default number of threads, the default {@link ThreadFactory} and
      * the {@link SelectorProvider} which is returned by {@link SelectorProvider#provider()}.
+     *
+     * NioEventLoopGroup本身也是一个线程池，里面管理了多个单线程的线程池-NioEventLoop
      */
     public NioEventLoopGroup() {
         this(0);
@@ -69,6 +71,12 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
     }
 
     public NioEventLoopGroup(int nThreads, Executor executor) {
+        /**
+         * Netty是如何实现跨平台的？ windows下的jdk与linux下的jdk返回的SelectorProvider是不同的
+         * SelectorProvider.provider() 返回JVM默认的SelectorProvider
+         * 如果配置了java.nio.channels.spi.SelectorProvider，会返回该配置的provider，
+         * 如果没有，则从META-INFO中获取，如果还没有则返回jdk默认的SelectorProvider
+         */
         this(nThreads, executor, SelectorProvider.provider());
     }
 
@@ -88,11 +96,13 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
 
     public NioEventLoopGroup(
             int nThreads, Executor executor, final SelectorProvider selectorProvider) {
+        // DefaultSelectStrategyFactory.INSTANCE ，提供一个默认选择策略，工厂模式
         this(nThreads, executor, selectorProvider, DefaultSelectStrategyFactory.INSTANCE);
     }
 
     public NioEventLoopGroup(int nThreads, Executor executor, final SelectorProvider selectorProvider,
                              final SelectStrategyFactory selectStrategyFactory) {
+        // RejectedExecutionHandlers.reject() 线程池拒绝策略
         super(nThreads, executor, selectorProvider, selectStrategyFactory, RejectedExecutionHandlers.reject());
     }
 
@@ -141,7 +151,16 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
 
     @Override
     protected EventLoop newChild(Executor executor, Object... args) throws Exception {
+        // 正常的代码逻辑，这里的queueFactory应该是null
         EventLoopTaskQueueFactory queueFactory = args.length == 4 ? (EventLoopTaskQueueFactory) args[3] : null;
+        /**
+         * 参数1: nioEventLoopGroup
+         * 参数2: executor, ThreadPerTaskExecutor实例，来源是group内创建的
+         * 参数3: SelectorProvider
+         * 参数4: 选择器工作策略
+         * 参数5: 线程池拒绝策略
+         * 参数6: queueFactory一般为null
+         */
         return new NioEventLoop(this, executor, (SelectorProvider) args[0],
             ((SelectStrategyFactory) args[1]).newSelectStrategy(), (RejectedExecutionHandler) args[2], queueFactory);
     }

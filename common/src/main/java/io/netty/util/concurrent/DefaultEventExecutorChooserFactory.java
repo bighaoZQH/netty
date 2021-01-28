@@ -53,6 +53,7 @@ public final class DefaultEventExecutorChooserFactory implements EventExecutorCh
 
         @Override
         public EventExecutor next() {
+            // executors总数必须是2的幂次方才会用&运算效率更高
             return executors[idx.getAndIncrement() & executors.length - 1];
         }
     }
@@ -70,6 +71,7 @@ public final class DefaultEventExecutorChooserFactory implements EventExecutorCh
 
         @Override
         public EventExecutor next() {
+            // 递增、取模、取正值，不然可能是负数
             return executors[(int) Math.abs(idx.getAndIncrement() % executors.length)];
         }
     }

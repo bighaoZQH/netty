@@ -56,15 +56,23 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     @SuppressWarnings("unchecked")
     static final Map.Entry<AttributeKey<?>, Object>[] EMPTY_ATTRIBUTE_ARRAY = new Map.Entry[0];
 
+    /**
+     * 这个group就是我们之前在对ServerBootstrap进行启动项配置是通过group(bossGroup,workerGroup)传入的bossGroup(即，NioEventLoopGroup)
+     * 表示一个reactor线程池
+     */
     volatile EventLoopGroup group;
     @SuppressWarnings("deprecation")
+    /** 用来创建初始的Channel,比如服务端的第一个执行bind()方法的serverChannel，客户端第一个执行connect()方法的Channel */
     private volatile ChannelFactory<? extends C> channelFactory;
     private volatile SocketAddress localAddress;
 
     // The order in which ChannelOptions are applied is important they may depend on each other for validation
     // purposes.
+    /** channel相关的选项参数 */
     private final Map<ChannelOption<?>, Object> options = new LinkedHashMap<ChannelOption<?>, Object>();
+    /** channel属性值 */
     private final Map<AttributeKey<?>, Object> attrs = new ConcurrentHashMap<AttributeKey<?>, Object>();
+    /** 业务逻辑handler，主要是HandlerInitializer，也可能是普通Handler */
     private volatile ChannelHandler handler;
 
     AbstractBootstrap() {
@@ -106,6 +114,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * {@link Channel} implementation has no no-args constructor.
      */
     public B channel(Class<? extends C> channelClass) {
+        // 将channel封装成一个反射channel工厂保存起来
         return channelFactory(new ReflectiveChannelFactory<C>(
                 ObjectUtil.checkNotNull(channelClass, "channelClass")
         ));
@@ -176,6 +185,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
             if (value == null) {
                 options.remove(option);
             } else {
+                // 将所有的配置放入到一个LinkedHashMap中
                 options.put(option, value);
             }
         }
@@ -243,6 +253,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * Create a new {@link Channel} and bind it.
      */
     public ChannelFuture bind(int inetPort) {
+        // 创建一个端口对象并传入
         return bind(new InetSocketAddress(inetPort));
     }
 
@@ -268,13 +279,23 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         return doBind(ObjectUtil.checkNotNull(localAddress, "localAddress"));
     }
 
+    /**
+     * 完成注册和绑定，其中注册是指Channel注册到reactor线程池，绑定是指Channel获得了本机的一个TCP端口
+     * doBind()中调用了initAndRegister() 和 doBind0(regFuture, channel, localAddress, promise)
+     */
     private ChannelFuture doBind(final SocketAddress localAddress) {
+        /**
+         * Channel的初始化操作，并且构建了该Channel的ChannelPipeline，
+         * 然后将该Channel(即，NioServerSocketChannel)注册到
+         * EventLoopGroup(即，parentGroup)中的某个EventLoop(即，NioEventLoop)上
+         */
         final ChannelFuture regFuture = initAndRegister();
         final Channel channel = regFuture.channel();
         if (regFuture.cause() != null) {
             return regFuture;
         }
 
+        // 如果regFuture中的register0()这个任务执行完成后 就是done状态
         if (regFuture.isDone()) {
             // At this point we know that the registration was complete and successful.
             ChannelPromise promise = channel.newPromise();
@@ -283,6 +304,8 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         } else {
             // Registration future is almost always fulfilled already, but just in case it's not.
             final PendingRegistrationPromise promise = new PendingRegistrationPromise(channel);
+            // 给regFuture添加一个回调监听器，当regFuture中的eventloop中的任务register0()执行完后，会回调到这个监听器
+            // 用于处理register0()这个方法是否执行成功
             regFuture.addListener(new ChannelFutureListener() {
                 @Override
                 public void operationComplete(ChannelFuture future) throws Exception {
@@ -304,10 +327,14 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         }
     }
 
+    /** 用于创建Channel、绑定用户定义的Handler、以及将该Chanel注册到一个Reactor中 */
     final ChannelFuture initAndRegister() {
         Channel channel = null;
         try {
+            // 通过ReflectiveChannelFactory反射工厂创建channel
+            // 服务端就是调用了NioServerSocketChannel的无参构造NioServerSocketChannel
             channel = channelFactory.newChannel();
+            // 初始化通道
             init(channel);
         } catch (Throwable t) {
             if (channel != null) {
@@ -320,6 +347,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
             return new DefaultChannelPromise(new FailedChannel(), GlobalEventExecutor.INSTANCE).setFailure(t);
         }
 
+        // 将channel注册到Reactor线程池
         ChannelFuture regFuture = config().group().register(channel);
         if (regFuture.cause() != null) {
             if (channel.isRegistered()) {
@@ -365,6 +393,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * the {@link ChannelHandler} to use for serving the requests.
      */
     public B handler(ChannelHandler handler) {
+        // 这个handler就是和boosGroup所关联起来 handler是pipeline中的处理器
         this.handler = ObjectUtil.checkNotNull(handler, "handler");
         return self();
     }
